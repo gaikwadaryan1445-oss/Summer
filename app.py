@@ -117,7 +117,7 @@ def llm_reply(user_text, history=[]):
     messages.extend(history) 
     messages.append({"role": "user", "content": user_text})
 
-    response = client.chat.completions.create(model="llama-3.1-8b-instant", messages=messages, tools=tools, tool_choice="auto")
+    response = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, tools=tools, tool_choice="auto")
     response_message = response.choices[0].message
     tool_calls = response_message.tool_calls
 
@@ -140,7 +140,7 @@ def llm_reply(user_text, history=[]):
                 
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
             
-        second_response = client.chat.completions.create(model="llama-3.1-8b-instant", messages=messages)
+        second_response = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages)
         reply = second_response.choices[0].message.content
     else:
         reply = response_message.content
