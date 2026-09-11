@@ -9,39 +9,72 @@ import json
 import requests
 from datetime import datetime
 from groq import Groq
-import chromadb
-from sentence_transformers import SentenceTransformer
+from huggingface_hub import InferenceClient
 
-# --- Load Whisper (Speech-to-Text) ---
-print("Loading Whisper...")
-whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
-print("Whisper ready.")
+# --- Configuration from Environment Variables ---
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+HF_TOKEN = os.environ.get("HF_TOKEN") # New: Hugging Face Token
 
-# --- Load Memory (ChromaDB) ---
-print("Loading memory...")
-embedder = SentenceTransformer('all-MiniLM-L6-v2')
-chroma_client = chromadb.Client()
-memory = chroma_client.get_or_create_collection("summer_memory")
+# --- Lazy Loading for Whisper (Speech-to-Text) ---
+whisper_model = None
+
+def get_whisper_model():
+    """Load the Whisper model only when it's first needed."""
+    global whisper_model
+    if whisper_model is None:
+        print("Loading Whisper...")
+        whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+        print("Whisper ready.")
+    return whisper_model
+
+# --- Memory (using Hugging Face Inference API) ---
+# This replaces ChromaDB and Sentence-Transformers to save memory.
+memory_storage = [] # In-memory list for this session
+hf_client = InferenceClient(token=HF_TOKEN)
 
 def save_memory(text):
-    embedding = embedder.encode(text).tolist()
-    memory.add(embeddings=[embedding], documents=[text], ids=[str(time.time())])
+    """Get an embedding from the Hugging Face API and store it."""
+    try:
+        # Get the embedding vector from the free API
+        embedding = hf_client.feature_extraction(
+            text,
+            model="sentence-transformers/all-MiniLM-L6-v2"
+        )
+        # Store the text and its embedding
+        memory_storage.append({"text": text, "embedding": embedding})
+        print(f"Memory saved: {text[:50]}...")
+    except Exception as e:
+        print(f"Error saving memory via API: {e}")
 
 def recall_memory(query, n_results=2):
-    if memory.count() == 0:
+    """Simple keyword-based recall for this session."""
+    # Note: A real implementation would use vector similarity.
+    # For the free tier, we'll use a simple search.
+    if not memory_storage:
         return ""
-    query_embedding = embedder.encode(query).tolist()
-    results = memory.query(query_embeddings=[query_embedding], n_results=n_results)
-    docs = results['documents'][0] if results['documents'] else []
-    return "\n".join(docs)
+    
+    # A very simple keyword match for demonstration.
+    # This is not as good as vector search but saves memory.
+    keywords = query.lower().split()
+    results = []
+    for item in reversed(memory_storage):
+        if any(keyword in item['text'].lower() for keyword in keywords):
+            results.append(item['text'])
+            if len(results) >= n_results:
+                break
+    return "\n".join(results)
 
-print("Memory ready.")
+print("Memory system ready (using HF API).")
 
 # --- Load Groq (The Brain) ---
-# The API key is pulled from Environment Variables (set this in Render)
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+if GROQ_API_KEY:
+    client = Groq(api_key=GROQ_API_KEY)
+else:
+    print("ERROR: GROQ_API_KEY is not set.")
+    client = None
 
 # --- Define Tools ---
+# (Tools remain the same as before)
 def get_current_time():
     return datetime.now().strftime("It is %I:%M %p on %A, %B %d, %Y.")
 
@@ -72,6 +105,7 @@ tools = [
 ]
 
 # --- The Brain Function ---
+# (The brain function remains the same)
 def llm_reply(user_text, history=[]):
     past_context = recall_memory(user_text)
     system_prompt = "You are Summer, a calm, efficient, slightly witty personal AI assistant. Keep your answers concise and conversational. Do not use markdown, emojis, or bullet points. Speak naturally."
@@ -115,6 +149,7 @@ def llm_reply(user_text, history=[]):
     return reply
 
 # --- Voice Loop ---
+# (The voice loop remains the same, but uses the lazy loader)
 chat_history = []
 
 async def _speak_async(text, path):
@@ -126,7 +161,8 @@ def process_audio(audio_path):
     if audio_path is None:
         return "No audio received.", None
 
-    segments, _ = whisper_model.transcribe(audio_path, language="en", vad_filter=True)
+    model = get_whisper_model() # Load model on first use
+    segments, _ = model.transcribe(audio_path, language="en", vad_filter=True)
     user_text = " ".join([seg.text for seg in segments]).strip()
 
     if not user_text:
