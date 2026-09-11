@@ -1,0 +1,7 @@
+faster-whisper
+edge-tts
+gradio
+groq
+chromadb
+sentence-transformers
+requests
